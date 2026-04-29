@@ -1,0 +1,113 @@
+#Folder containing ROIs and folder for Ilastik outputs. 
+in_folder = Path("E:\\260306_AxonaThioS_Tiffs\\1117425\\ROIs")
+out_folder = Path("E:\\260306_AxonaThioS_Tiffs\\1117425\\Ilastik_Pipeline_Outputs")
+
+#Ilastik segmentation. 
+for in_file in in_folder.glob("*.tif"):
+    out_file = out_folder / in_file.name.replace(".tif", "_SimpleSegmentation.h5")
+    print(f"Processing {in_file} -> {out_file}")
+    command = [
+    "C:\\Program Files\\ilastik-1.4.2b6\\ilastik.exe",
+    '--headless',
+    '--project="E:\\260306_AxonaThioS_Tiffs\\NLGF_Segmentation.ilp"',
+    '--output_format=hdf5',
+    '--export_source=simple segmentation',
+    '--raw_data=' + str(in_file),
+    '--output_filename_format=' + str(out_file)
+]
+
+    
+    print("COMMAND=", "  ".join(command))
+    
+    process = subprocess.run(command, check = True)
+
+#%%
+# Get all .h5 files
+hdf5_files = out_folder.glob("*.h5")
+
+# Dictionary to store results
+hdf5_dict = {}
+
+# Loop over files
+for in_file in hdf5_files:
+    filename = in_file.stem
+    parts = filename.split("_")
+
+    # Make sure filename has enough parts
+    if len(parts) >= 6:
+        staining_method = parts[0]
+        genotype = parts[1]
+        gender = parts[2]
+        brain = parts[3]
+        slide = parts[4]
+        region = parts[5]
+
+        print(f"Processing: {in_file.name}")
+
+        # Open HDF5 file
+        with h5py.File(in_file, 'r') as f:
+
+            # Handle Ilastik export structure
+            if 'exported_data' in f:
+                segmentation_data = f['exported_data'][:]
+            elif 'data' in f:
+                segmentation_data = f['data'][:]
+            else:
+                print(f"⚠️ Skipping {in_file.name} - unknown structure: {list(f.keys())}")
+                continue
+
+            # Remove singleton dimensions (IMPORTANT)
+            segmentation_data = np.squeeze(segmentation_data)
+
+            # Optional debug (run once if unsure)
+            # print(np.unique(segmentation_data))
+
+            # Labels (adjust if needed)
+            plaque_label = 3
+            background_label = 2
+
+            plaque_count = np.count_nonzero(segmentation_data == plaque_label)
+            background_count = np.count_nonzero(segmentation_data == background_label)
+
+            # Avoid division by zero
+            if (plaque_count + background_count) == 0:
+                percentage_coverage = 0
+            else:
+                percentage_coverage = (plaque_count / (plaque_count + background_count)) * 100
+
+            # Create grouping key
+            unique_key = f"{staining_method}_{genotype}_{gender}_{brain}_{region}"
+
+            # Store results
+            if unique_key not in hdf5_dict:
+                hdf5_dict[unique_key] = {'slide': [], 'a': []}
+
+            hdf5_dict[unique_key]['slide'].append(slide)
+            hdf5_dict[unique_key]['a'].append(percentage_coverage)
+
+# Create Excel outputs
+
+for key, value in hdf5_dict.items():
+    slide = value['slide']
+    a = value['a']
+
+    # Calculate average
+    total_percentage_coverage = sum(a) / len(a)
+    a.append(total_percentage_coverage)
+    slide.append("AVERAGE")
+
+    # Create DataFrame
+    df = pd.DataFrame(zip(slide, a), columns=["Slide", "Percentage Coverage"])
+
+    # Clean filename
+    b = key.replace("*", "_")
+
+    # Output path
+    output_filename = f"{b}_Percentage_Of_Coverage.xlsx"
+    output_path = out_folder / output_filename
+
+    # Save Excel
+    with pd.ExcelWriter(output_path, engine='xlsxwriter') as writer:
+        df.to_excel(writer, sheet_name='Percentage of Coverage', index=False)
+
+    print(f"Saved: {output_filename}")
