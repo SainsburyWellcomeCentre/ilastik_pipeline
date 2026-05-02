@@ -1,4 +1,6 @@
 # ilastik_pipeline
+
+This pipeline was developed by Diego Caron **(O'Keefe Lab)** for the segmentation of amyloid plaques
 ilastik_Diego_29Apr2026
 
 
